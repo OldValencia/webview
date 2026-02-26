@@ -1,37 +1,72 @@
-name: Build Natives (From Matrix)
+name: Build Natives
 
 on:
   workflow_dispatch:
 
 jobs:
-  run-matrix:
-    uses: ./.github/workflows/build.yaml
-    with:
-      pr: false
-      coverage: false
-
-  collect-webview-natives:
-    needs: run-matrix
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, Win32, ARM64]
     steps:
-      - name: Download all matrix artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: all-artifacts
-
-      - name: Extract Shared Libraries
-        run: |
-          mkdir webview-natives
-          
-          # Windows
-          find all-artifacts -name "webview.dll" -exec cp {} webview-natives/ \;
-          # Linux
-          find all-artifacts -name "libwebview.so" -exec cp {} webview-natives/ \;
-          # macOS
-          find all-artifacts -name "libwebview.dylib" -exec cp {} webview-natives/ \;
-
-      - name: Upload Final Webview Bundle
+      - uses: actions/checkout@v4
+      - name: Configure CMake
+        run: cmake -B build -S . -A ${{ matrix.arch }} -D WEBVIEW_BUILD_SHARED_LIBRARY=ON
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload Temp
         uses: actions/upload-artifact@v4
         with:
-          name: lib-webview-natives
-          path: webview-natives/
+          name: win-${{ matrix.arch }}
+          path: build/**/*.dll
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure CMake (Universal)
+        run: cmake -B build -S . -D WEBVIEW_BUILD_SHARED_LIBRARY=ON -D CMAKE_OSX_ARCHITECTURES="x86_64;arm64"
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload Temp
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-universal
+          path: build/**/*.dylib
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: Configure CMake
+        run: cmake -B build -S . -D WEBVIEW_BUILD_SHARED_LIBRARY=ON
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Upload Temp
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64
+          path: build/**/*.so
+
+  collect-all:
+    needs: [build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all temp artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded-libs
+
+      - name: Prepare Final Folder
+        run: |
+          mkdir final-natives
+          find downloaded-libs -type f \( -name "*.dll" -o -name "*.dylib" -o -name "*.so" \) -exec cp {} final-natives/ \;
+
+      - name: Upload Final Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: spark-webview-natives
+          path: final-natives/
