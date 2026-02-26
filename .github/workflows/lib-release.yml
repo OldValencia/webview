@@ -1,0 +1,37 @@
+name: Build Natives (From Matrix)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-matrix:
+    uses: ./.github/workflows/build.yaml
+    with:
+      pr: false
+      coverage: false
+
+  collect-webview-natives:
+    needs: run-matrix
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all matrix artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Extract Shared Libraries
+        run: |
+          mkdir webview-natives
+          
+          # Windows
+          find all-artifacts -name "webview.dll" -exec cp {} webview-natives/ \;
+          # Linux
+          find all-artifacts -name "libwebview.so" -exec cp {} webview-natives/ \;
+          # macOS
+          find all-artifacts -name "libwebview.dylib" -exec cp {} webview-natives/ \;
+
+      - name: Upload Final Webview Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-webview-natives
+          path: webview-natives/
