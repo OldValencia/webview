@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure CMake
-        run: cmake -B build -S . -A ${{ matrix.arch }} -D WEBVIEW_BUILD_SHARED_LIBRARY=ON -D WEBVIEW_ENABLE_CLANG_FORMAT=OFF -D WEBVIEW_ENABLE_CLANG_TIDY=OFF -D WEBVIEW_BUILD_DOCS=OFF
+        run: cmake -B build -S . -A ${{ matrix.arch }} -D WEBVIEW_BUILD_SHARED_LIBRARY=ON -D WEBVIEW_ENABLE_CLANG_FORMAT=OFF -D WEBVIEW_ENABLE_CLANG_TIDY=OFF -D WEBVIEW_BUILD_DOCS=OFF -D WEBVIEW_BUILD_AMALGAMATION=OFF -D WEBVIEW_BUILD_TESTS=OFF -D WEBVIEW_BUILD_EXAMPLES=OFF
       - name: Build
         run: cmake --build build --config Release
       - name: Upload Temp
@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure CMake
-        run: cmake -B build -S . -D WEBVIEW_BUILD_SHARED_LIBRARY=ON -D CMAKE_OSX_ARCHITECTURES="x86_64;arm64" -D WEBVIEW_ENABLE_CLANG_FORMAT=OFF -D WEBVIEW_ENABLE_CLANG_TIDY=OFF -D WEBVIEW_BUILD_DOCS=OFF
+        run: cmake -B build -S . -D WEBVIEW_BUILD_SHARED_LIBRARY=ON -D CMAKE_OSX_ARCHITECTURES="x86_64;arm64" -D WEBVIEW_ENABLE_CLANG_FORMAT=OFF -D WEBVIEW_ENABLE_CLANG_TIDY=OFF -D WEBVIEW_BUILD_DOCS=OFF -D WEBVIEW_BUILD_AMALGAMATION=OFF -D WEBVIEW_BUILD_TESTS=OFF -D WEBVIEW_BUILD_EXAMPLES=OFF
       - name: Build
         run: cmake --build build --config Release
       - name: Upload Temp
@@ -42,7 +42,7 @@ jobs:
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
       - name: Configure CMake
-        run: cmake -B build -S . -D WEBVIEW_BUILD_SHARED_LIBRARY=ON -D WEBVIEW_ENABLE_CLANG_FORMAT=OFF -D WEBVIEW_ENABLE_CLANG_TIDY=OFF -D WEBVIEW_BUILD_DOCS=OFF
+        run: cmake -B build -S . -D WEBVIEW_BUILD_SHARED_LIBRARY=ON -D WEBVIEW_ENABLE_CLANG_FORMAT=OFF -D WEBVIEW_ENABLE_CLANG_TIDY=OFF -D WEBVIEW_BUILD_DOCS=OFF -D WEBVIEW_BUILD_AMALGAMATION=OFF -D WEBVIEW_BUILD_TESTS=OFF -D WEBVIEW_BUILD_EXAMPLES=OFF
       - name: Build
         run: cmake --build build --config Release
       - name: Upload Temp
