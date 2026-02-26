@@ -1,2 +1,4 @@
 # Build artifacts
 /build
+/.vs
+/CMakeSettings.json
