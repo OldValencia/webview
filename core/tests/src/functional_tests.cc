@@ -16,6 +16,7 @@
 // occationally timing out in CI.
 #ifdef WEBVIEW_PLATFORM_WINDOWS
 #include <iostream>
+#include <thread>
 
 TEST_CASE("# Warm-up") {
   // Signal to the test runner that this may be a slow test.
@@ -314,3 +315,64 @@ TEST_CASE("Bad C API usage without crash") {
   ASSERT_WEBVIEW_FAILED(webview_run(w));
   ASSERT_WEBVIEW_FAILED(webview_destroy(w));
 }
+
+#ifdef WEBVIEW_PLATFORM_WINDOWS
+TEST_CASE("Windows reports calls against a closed controller") {
+  webview_t w = webview_create(false, nullptr);
+  REQUIRE(w != nullptr);
+  auto *controller =
+      static_cast<ICoreWebView2Controller *>(webview_get_native_handle(
+          w, WEBVIEW_NATIVE_HANDLE_KIND_BROWSER_CONTROLLER));
+  auto closed = controller->Close();
+  auto navigation = webview_navigate(w, "about:blank");
+  auto evaluation = webview_eval(w, "void 0");
+  auto html = webview_set_html(w, "closed");
+  auto destroyed = webview_destroy(w);
+  REQUIRE(SUCCEEDED(closed));
+  REQUIRE(navigation < 0);
+  REQUIRE(evaluation < 0);
+  REQUIRE(html < 0);
+  REQUIRE(destroyed == WEBVIEW_ERROR_OK);
+}
+
+TEST_CASE("Windows releases a dispatch task if the message queue is full") {
+  webview::webview w(false, nullptr);
+  HWND message_window =
+      FindWindowExW(HWND_MESSAGE, nullptr, L"webview_message", nullptr);
+  REQUIRE(message_window != nullptr);
+  REQUIRE(GetWindowThreadProcessId(message_window, nullptr) ==
+          GetCurrentThreadId());
+  unsigned int posted = 0;
+  while (posted < 100000 && PostMessageW(message_window, WM_NULL, 0, 0)) {
+    ++posted;
+  }
+  auto token = std::make_shared<int>(42);
+  std::weak_ptr<int> weak = token;
+  auto result = w.dispatch([token]() {});
+  token.reset();
+  MSG message;
+  while (PeekMessageW(&message, message_window, WM_NULL, WM_NULL, PM_REMOVE)) {
+  }
+  REQUIRE(posted < 100000);
+  REQUIRE(result.has_error());
+  REQUIRE(weak.expired());
+}
+#endif
+
+#ifdef WEBVIEW_PLATFORM_WINDOWS
+TEST_CASE("Windows terminates the owning event loop from another thread") {
+  webview::webview w(false, nullptr);
+  std::thread worker;
+  webview::noresult termination;
+  w.dispatch(
+      [&]() { worker = std::thread([&]() { termination = w.terminate(); }); });
+  auto loop = w.run();
+  const bool started = worker.joinable();
+  if (started) {
+    worker.join();
+  }
+  REQUIRE(started);
+  REQUIRE(loop.ok());
+  REQUIRE(termination.ok());
+}
+#endif

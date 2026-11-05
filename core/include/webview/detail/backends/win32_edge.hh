@@ -374,9 +374,13 @@ public:
 protected:
   noresult run_impl() override {
     MSG msg;
-    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    BOOL status;
+    while ((status = GetMessageW(&msg, nullptr, 0, 0)) > 0) {
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
+    }
+    if (status == -1) {
+      return error_info{WEBVIEW_ERROR_UNSPECIFIED, "GetMessageW failed"};
     }
     return {};
   }
@@ -399,11 +403,25 @@ protected:
     return error_info{WEBVIEW_ERROR_INVALID_STATE};
   }
   noresult terminate_impl() override {
-    PostQuitMessage(0);
+    if (GetCurrentThreadId() == m_main_thread) {
+      PostQuitMessage(0);
+    } else if (!PostThreadMessageW(m_main_thread, WM_QUIT, 0, 0)) {
+      return error_info{WEBVIEW_ERROR_UNSPECIFIED, "PostThreadMessageW failed"};
+    }
     return {};
   }
   noresult dispatch_impl(dispatch_fn_t f) override {
-    PostMessageW(m_message_window, WM_APP, 0, (LPARAM) new dispatch_fn_t(f));
+    if (!m_message_window) {
+      return error_info{WEBVIEW_ERROR_INVALID_STATE,
+                        "Dispatch message window is unavailable"};
+    }
+    auto task = std::unique_ptr<dispatch_fn_t>{new dispatch_fn_t(std::move(f))};
+    if (!PostMessageW(m_message_window, WM_APP, 0,
+                      reinterpret_cast<LPARAM>(task.get()))) {
+      return error_info{WEBVIEW_ERROR_UNSPECIFIED, "PostMessageW failed"};
+    }
+    // Ownership transfers to the message handler only after successful posting.
+    task.release();
     return {};
   }
 
@@ -441,23 +459,33 @@ protected:
     return window_show();
   }
 
+  static noresult check_hresult(HRESULT status, const char *operation) {
+    if (FAILED(status)) {
+      auto code = status == E_INVALIDARG ? WEBVIEW_ERROR_INVALID_ARGUMENT
+                                         : WEBVIEW_ERROR_UNSPECIFIED;
+      return error_info{code, std::string{operation} + " failed (HRESULT " +
+                                  std::to_string(status) + ")"};
+    }
+    return {};
+  }
+
   noresult navigate_impl(const std::string &url) override {
     auto wurl = widen_string(url);
-    m_webview->Navigate(wurl.c_str());
-    return {};
+    return check_hresult(m_webview->Navigate(wurl.c_str()), "Navigate");
   }
 
   noresult eval_impl(const std::string &js) override {
     // TODO: Skip if no content has begun loading yet. Can't check with
     //       ICoreWebView2::get_Source because it returns "about:blank".
     auto wjs = widen_string(js);
-    m_webview->ExecuteScript(wjs.c_str(), nullptr);
-    return {};
+    return check_hresult(m_webview->ExecuteScript(wjs.c_str(), nullptr),
+                         "ExecuteScript");
   }
 
   noresult set_html_impl(const std::string &html) override {
-    m_webview->NavigateToString(widen_string(html).c_str());
-    return {};
+    return check_hresult(
+        m_webview->NavigateToString(widen_string(html).c_str()),
+        "NavigateToString");
   }
 
   user_script add_user_script_impl(const std::string &js) override {

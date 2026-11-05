@@ -2,3 +2,8 @@
 /build
 /.vs
 /CMakeSettings.json
+
+/.idea/
+/dist/
+/final-natives/
+__pycache__/
