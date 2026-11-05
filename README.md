@@ -478,15 +478,15 @@ Nim         | [oskca/webview](https://github.com/oskca/webview), [neroist/webvie
 Node.js     | [Winterreisender/webview-nodejs](https://github.com/Winterreisender/webview-nodejs)
 Odin        | [thechampagne/webview-odin](https://github.com/thechampagne/webview-odin)
 Pascal      | [PierceNg/fpwebview](http://github.com/PierceNg/fpwebview)
-Python      | [congzhangzh/webview_python](https://github.com/congzhangzh/webview_python),[zserge/webview-python](https://github.com/zserge/webview-python)
-PHP         | [0hr/php-webview](https://github.com/0hr/php-webview), [KingBes/pebview](https://github.com/KingBes/pebview)
+Python      | [congzhangzh/webview_python](https://github.com/congzhangzh/webview_python), [zserge/webview-python](https://github.com/zserge/webview-python), [RustamovHumoyunMirzo/AppVerse](https://github.com/RustamovHumoyunMirzo/AppVerse)
+PHP         | [0hr/php-webview](https://github.com/0hr/php-webview), [KingBes/pebview](https://github.com/KingBes/pebview), [happystraw/php-ext-webview](https://github.com/happystraw/php-ext-webview)
 Ring        | [ysdragon/webview](https://github.com/ysdragon/webview)
 Ruby        | [Maaarcocr/webview_ruby](https://github.com/Maaarcocr/webview_ruby)
 Rust        | [Boscop/web-view](https://github.com/Boscop/web-view)
 Swift       | [jakenvac/SwiftWebview](https://github.com/jakenvac/SwiftWebview)
 V           | [malisipi/mui](https://github.com/malisipi/mui/tree/main/webview), [ttytm/webview](https://github.com/ttytm/webview)
 Vala        | [taozuhong/webview-vala](https://github.com/taozuhong/webview-vala)
-Zig         | [thechampagne/webview-zig](https://github.com/thechampagne/webview-zig)
+Zig         | [thechampagne/webview-zig](https://github.com/thechampagne/webview-zig), [happystraw/zig-webview](https://github.com/happystraw/zig-webview)
 
 If you wish to add bindings to the list, feel free to submit a pull request or [open an issue][issues-new].
 
