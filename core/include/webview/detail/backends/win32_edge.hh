@@ -107,11 +107,11 @@ public:
 
   ULONG STDMETHODCALLTYPE AddRef() { return ++m_ref_count; }
   ULONG STDMETHODCALLTYPE Release() {
-    if (m_ref_count > 1) {
-      return --m_ref_count;
+    auto remaining = --m_ref_count;
+    if (remaining == 0) {
+      delete this;
     }
-    delete this;
-    return 0;
+    return remaining;
   }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, LPVOID *ppv) {
     using namespace mswebview2::cast_info;
@@ -140,6 +140,9 @@ public:
     return E_NOINTERFACE;
   }
   HRESULT STDMETHODCALLTYPE Invoke(HRESULT res, ICoreWebView2Environment *env) {
+    if (is_detached()) {
+      return S_OK;
+    }
     if (SUCCEEDED(res)) {
       res = env->CreateCoreWebView2Controller(m_window, this);
       if (SUCCEEDED(res)) {
@@ -158,17 +161,29 @@ public:
       switch (res) {
       case HRESULT_FROM_WIN32(ERROR_INVALID_STATE):
       case E_ABORT:
+        notify_failure();
         return S_OK;
       }
       try_create_environment();
       return S_OK;
     }
 
-    ICoreWebView2 *webview;
-    ::EventRegistrationToken token;
-    controller->get_CoreWebView2(&webview);
-    webview->add_WebMessageReceived(this, &token);
-    webview->add_PermissionRequested(this, &token);
+    if (is_detached()) {
+      // The engine gave up waiting; discard the late controller.
+      controller->Close();
+      return S_OK;
+    }
+
+    // get_CoreWebView2 returns an AddRef'd pointer whose ownership is passed
+    // on to the completion callback.
+    ICoreWebView2 *webview = nullptr;
+    if (FAILED(controller->get_CoreWebView2(&webview)) || !webview) {
+      controller->Close();
+      notify_failure();
+      return S_OK;
+    }
+    webview->add_WebMessageReceived(this, &m_message_received_token);
+    webview->add_PermissionRequested(this, &m_permission_requested_token);
 
     m_cb(controller, webview);
     return S_OK;
@@ -210,7 +225,7 @@ public:
     // a running instance using the same user data folder exists, and the
     // Environment objects have different EnvironmentOptions.
     // Source: https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2environment?view=webview2-1.0.1150.38
-    if (m_attempts < m_max_attempts) {
+    while (m_attempt_handler && m_attempts < m_max_attempts) {
       ++m_attempts;
       auto res = m_attempt_handler();
       if (SUCCEEDED(res)) {
@@ -219,24 +234,44 @@ public:
       // Not entirely sure if this error code only applies to
       // CreateCoreWebView2Controller so we check here as well.
       if (res == HRESULT_FROM_WIN32(ERROR_INVALID_STATE)) {
-        return;
+        break;
       }
       // Wait for m_sleep_ms before trying again.
       Sleep(m_sleep_ms);
-      try_create_environment();
-      return;
     }
     // Give up.
-    m_cb(nullptr, nullptr);
+    notify_failure();
+  }
+
+  // Stop invoking the completion and attempt callbacks. They may capture
+  // state owned by the caller that does not outlive the initialization.
+  void detach() noexcept {
+    m_cb = nullptr;
+    m_attempt_handler = nullptr;
+  }
+
+  void remove_event_handlers(ICoreWebView2 *webview) noexcept {
+    webview->remove_WebMessageReceived(m_message_received_token);
+    webview->remove_PermissionRequested(m_permission_requested_token);
   }
 
 private:
+  bool is_detached() const noexcept { return !m_cb; }
+
+  void notify_failure() noexcept {
+    if (m_cb) {
+      m_cb(nullptr, nullptr);
+    }
+  }
+
   HWND m_window;
   msg_cb_t m_msgCb;
   webview2_com_handler_cb_t m_cb;
   std::atomic<ULONG> m_ref_count{1};
   std::function<HRESULT()> m_attempt_handler;
-  unsigned int m_max_attempts = 60;
+  ::EventRegistrationToken m_message_received_token{};
+  ::EventRegistrationToken m_permission_requested_token{};
+  unsigned int m_max_attempts = 5;
   unsigned int m_sleep_ms = 200;
   unsigned int m_attempts = 0;
 };
@@ -260,11 +295,11 @@ public:
 
   ULONG STDMETHODCALLTYPE AddRef() { return ++m_ref_count; }
   ULONG STDMETHODCALLTYPE Release() {
-    if (m_ref_count > 1) {
-      return --m_ref_count;
+    auto remaining = --m_ref_count;
+    if (remaining == 0) {
+      delete this;
     }
-    delete this;
-    return 0;
+    return remaining;
   }
 
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, LPVOID *ppv) {
@@ -314,23 +349,42 @@ private:
 class win32_edge_engine : public engine_base {
 public:
   win32_edge_engine(bool debug, void *window) : engine_base{!window} {
-    window_init(window);
-    window_settings(debug);
+    try {
+      window_init(window);
+      window_settings(debug);
+    } catch (...) {
+      // The destructor does not run when the constructor throws.
+      release_resources();
+      throw;
+    }
     dispatch_size_default();
   }
 
-  virtual ~win32_edge_engine() {
-    if (m_com_handler) {
-      m_com_handler->Release();
-      m_com_handler = nullptr;
-    }
+  virtual ~win32_edge_engine() { release_resources(); }
+
+  win32_edge_engine(const win32_edge_engine &other) = delete;
+  win32_edge_engine &operator=(const win32_edge_engine &other) = delete;
+  win32_edge_engine(win32_edge_engine &&other) = delete;
+  win32_edge_engine &operator=(win32_edge_engine &&other) = delete;
+
+private:
+  void release_resources() noexcept {
     if (m_webview) {
+      if (m_com_handler) {
+        m_com_handler->remove_event_handlers(m_webview);
+      }
       m_webview->Release();
       m_webview = nullptr;
     }
     if (m_controller) {
+      m_controller->Close();
       m_controller->Release();
       m_controller = nullptr;
+    }
+    if (m_com_handler) {
+      m_com_handler->detach();
+      m_com_handler->Release();
+      m_com_handler = nullptr;
     }
     // Replace wndproc to avoid callbacks and other bad things during
     // destruction.
@@ -355,7 +409,7 @@ public:
       }
       m_window = nullptr;
     }
-    if (owns_window()) {
+    if (owns_window() && m_message_window) {
       // Not strictly needed for windows to close immediately but aligns
       // behavior across backends.
       deplete_run_loop_event_queue();
@@ -367,11 +421,6 @@ public:
       m_message_window = nullptr;
     }
   }
-
-  win32_edge_engine(const win32_edge_engine &other) = delete;
-  win32_edge_engine &operator=(const win32_edge_engine &other) = delete;
-  win32_edge_engine(win32_edge_engine &&other) = delete;
-  win32_edge_engine &operator=(win32_edge_engine &&other) = delete;
 
 protected:
   noresult run_impl() override {
@@ -471,7 +520,14 @@ protected:
     return {};
   }
 
+  static noresult webview_unavailable() {
+    return error_info{WEBVIEW_ERROR_INVALID_STATE, "WebView is unavailable"};
+  }
+
   noresult navigate_impl(const std::string &url) override {
+    if (!m_webview) {
+      return webview_unavailable();
+    }
     auto wurl = widen_string(url);
     return check_hresult(m_webview->Navigate(wurl.c_str()), "Navigate");
   }
@@ -479,12 +535,18 @@ protected:
   noresult eval_impl(const std::string &js) override {
     // TODO: Skip if no content has begun loading yet. Can't check with
     //       ICoreWebView2::get_Source because it returns "about:blank".
+    if (!m_webview) {
+      return webview_unavailable();
+    }
     auto wjs = widen_string(js);
     return check_hresult(m_webview->ExecuteScript(wjs.c_str(), nullptr),
                          "ExecuteScript");
   }
 
   noresult set_html_impl(const std::string &html) override {
+    if (!m_webview) {
+      return webview_unavailable();
+    }
     return check_hresult(
         m_webview->NavigateToString(widen_string(html).c_str()),
         "NavigateToString");
@@ -500,8 +562,9 @@ protected:
       }
       done = true;
     }};
-    auto res =
-        m_webview->AddScriptToExecuteOnDocumentCreated(wjs.c_str(), &handler);
+    auto res = m_webview ? m_webview->AddScriptToExecuteOnDocumentCreated(
+                               wjs.c_str(), &handler)
+                         : E_POINTER;
     if (SUCCEEDED(res)) {
       // We want to guard against executing the default `set_size` prematurely
       set_default_size_guard(true);
@@ -523,6 +586,9 @@ protected:
 
   void
   remove_all_user_scripts_impl(const std::list<user_script> &scripts) override {
+    if (!m_webview) {
+      return;
+    }
     for (const auto &script : scripts) {
       const auto &id = script.get_impl().get_id();
       m_webview->RemoveScriptToExecuteOnDocumentCreated(id.c_str());
@@ -777,8 +843,9 @@ private:
             flag.clear();
             return;
           }
+          // The controller is a borrowed callback argument, while webview is
+          // already AddRef'd by get_CoreWebView2 and is adopted here.
           controller->AddRef();
-          webview->AddRef();
           m_controller = controller;
           m_webview = webview;
           flag.clear();
@@ -802,7 +869,7 @@ private:
 
     // Pump the message loop until WebView2 has finished initialization.
     bool got_quit_msg = false;
-    MSG msg;
+    MSG msg{};
     while (flag.test_and_set() && GetMessageW(&msg, nullptr, 0, 0) >= 0) {
       if (msg.message == WM_QUIT) {
         got_quit_msg = true;
@@ -811,13 +878,17 @@ private:
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
     }
+    // The callbacks capture locals of this function by reference.
+    m_com_handler->detach();
     if (got_quit_msg) {
+      // Leave WM_QUIT for the caller's message loop.
+      PostQuitMessage(static_cast<int>(msg.wParam));
       return error_info{WEBVIEW_ERROR_CANCELED};
     }
     if (!m_controller || !m_webview) {
       return error_info{WEBVIEW_ERROR_INVALID_STATE};
     }
-    ICoreWebView2Settings *settings = nullptr;
+    Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings;
     auto res = m_webview->get_Settings(&settings);
     if (res != S_OK) {
       return error_info{WEBVIEW_ERROR_UNSPECIFIED, "get_Settings failed"};
@@ -913,10 +984,15 @@ private:
   }
 
   void run_event_loop_while(std::function<bool()> fn) override {
-    MSG msg;
-    while (fn() && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+    MSG msg{};
+    BOOL status = 1;
+    while (fn() && (status = GetMessageW(&msg, nullptr, 0, 0)) > 0) {
       TranslateMessage(&msg);
       DispatchMessageW(&msg);
+    }
+    if (status == 0) {
+      // Leave WM_QUIT for the outer message loop.
+      PostQuitMessage(static_cast<int>(msg.wParam));
     }
   }
 
