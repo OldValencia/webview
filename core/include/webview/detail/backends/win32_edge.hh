@@ -67,6 +67,8 @@
 #endif
 
 #include <windows.h>
+#include <WebView2EnvironmentOptions.h>
+#include <wrl.h>
 
 #include <objbase.h>
 #include <shlobj.h>
@@ -783,8 +785,18 @@ private:
         });
 
     m_com_handler->set_attempt_handler([&] {
+      auto options = Microsoft::WRL::Make<CoreWebView2EnvironmentOptions>();
+      Microsoft::WRL::ComPtr<ICoreWebView2EnvironmentOptions6> extensions;
+      auto result = options.As(&extensions);
+      if (FAILED(result)) {
+        return result;
+      }
+      result = extensions->put_AreBrowserExtensionsEnabled(TRUE);
+      if (FAILED(result)) {
+        return result;
+      }
       return m_webview2_loader.create_environment_with_options(
-          nullptr, userDataFolder, nullptr, m_com_handler);
+          nullptr, userDataFolder, options.Get(), m_com_handler);
     });
     m_com_handler->try_create_environment();
 
